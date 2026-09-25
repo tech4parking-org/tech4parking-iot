@@ -88,6 +88,19 @@ arduino-cli compile --fqbn esp32:esp32:esp32 iot-core/parking-spots
 arduino-cli upload  --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 iot-core/parking-spots
 ```
 
+## Como validar a entrega
+
+Em uma validação end-to-end, aproximar e afastar um objeto do sensor deve mudar o estado da vaga no web app.
+
+Pontos principais de validação:
+
+- firmware compilando para **ESP32 Dev Module** sem erros;
+- monitor serial mostrando a conexão ao Wi-Fi e ao AWS IoT Core;
+- distância abaixo de 20 cm publicando `ocupada` e acima publicando `disponível`;
+- mensagem visível no **MQTT test client** do IoT Core, no tópico `parking_sensor`;
+- vaga atualizada na tabela `ParkingSpots` e no web app;
+- boot seguinte usando o Wi-Fi e o ID da vaga salvos, sem pedir de novo.
+
 ## Projeto Tech4Parking
 
 | Repositório | Camada |
