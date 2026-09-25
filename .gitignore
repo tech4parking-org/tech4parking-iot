@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+
+# Segredos do dispositivo (use iot-core/parking-spots/secrets.example.h como modelo)
+secrets.h
+*.pem
+*.pem.crt
+*.pem.key

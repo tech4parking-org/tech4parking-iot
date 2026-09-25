@@ -1,197 +1,156 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
-#include <EEPROM.h>
+#include <Preferences.h>
+
+#include "secrets.h"  // copie secrets.example.h para secrets.h e preencha
 
 // Pinos do sensor HC-SR04
 const int trigPin = 17;  // TX2
 const int echoPin = 16;  // RX2
 
-// Configurações AWS IoT
-const char* AWS_IOT_ENDPOINT = "REMOVED";
-const char* AWS_IOT_TOPIC = "parking_sensor";
+// Distância (cm) abaixo da qual a vaga é considerada ocupada
+const float OCCUPIED_DISTANCE_CM = 20.0;
+// Tempo máximo esperando o eco (~5 m de alcance)
+const unsigned long ECHO_TIMEOUT_US = 30000;
+// Janela no boot para entrar no modo de configuração pela serial
+const unsigned long CONFIG_WINDOW_MS = 5000;
 
-// Certificados
-const char* ROOT_CA = R"EOF(
------BEGIN CERTIFICATE-----
-MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF
-ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6
-b24gUm9vdCBDQSAxMB4XDTE1MDUyNjAwMDAwMFoXDTM4MDExNzAwMDAwMFowOTEL
-MAkGA1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJv
-b3QgQ0EgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALJ4gHHKeNXj
-ca9HgFB0fW7Y14h29Jlo91ghYPl0hAEvrAIthtOgQ3pOsqTQNroBvo3bSMgHFzZM
-9O6II8c+6zf1tRn4SWiw3te5djgdYZ6k/oI2peVKVuRF4fn9tBb6dNqcmzU5L/qw
-IFAGbHrQgLKm+a/sRxmPUDgH3KKHOVj4utWp+UhnMJbulHheb4mjUcAwhmahRWa6
-VOujw5H5SNz/0egwLX0tdHA114gk957EWW67c4cX8jJGKLhD+rcdqsq08p8kDi1L
-93FcXmn/6pUCyziKrlA4b9v7LWIbxcceVOF34GfID5yHI9Y/QCB/IIDEgEw+OyQm
-jgSubJrIqg0CAwEAAaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC
-AYYwHQYDVR0OBBYEFIQYzIU07LwMlJQuCFmcx7IQTgoIMA0GCSqGSIb3DQEBCwUA
-A4IBAQCY8jdaQZChGsV2USggNiMOruYou6r4lK5IpDB/G/wkjUu0yKGX9rbxenDI
-U5PMCCjjmCXPI6T53iHTfIUJrU6adTrCC2qJeHZERxhlbI1Bjjt/msv0tadQ1wUs
-N+gDS63pYaACbvXy8MWy7Vu33PqUXHeeE6V/Uq2V8viTO96LXFvKWlJbYK8U90vv
-o/ufQJVtMVT8QtPHRh8jrdkPSHCa2XV4cdFyQzR1bldZwgJcJmApzyMZFo6IQ6XU
-5MsI+yMRQ+hDKXJioaldXgjUkK642M4UwtBV8ob2xJNDd2ZhwLnoQdeXeGADbkpy
-rqXRfboQnoZsG4q5WTP468SQvvG5
------END CERTIFICATE-----
-)EOF";
+Preferences prefs;  // Wi-Fi e ID da vaga ficam salvos na memória flash (NVS)
 
-const char* CERTIFICATE = "REMOVED";
-
-const char* PRIVATE_KEY = "REMOVED";
-
-const int EEPROM_SIZE = 512;
-const int SPOT_ID_ADDRESS = 0;
-const int SPOT_ID_MAX_LENGTH = 50;
-
+String wifiSsid = "";
+String wifiPassword = "";
 String spotId = "";
-String lastStatus = "";  // Variável para armazenar o último status enviado
+String lastStatus = "";  // último status enviado
 
 WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 
+String readSerialLine() {
+  while (!Serial.available()) {
+    delay(100);
+  }
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+  return line;
+}
+
 void scanNetworks() {
   Serial.println("Escaneando redes Wi-Fi...");
   int n = WiFi.scanNetworks();
-  Serial.println("Escaneamento concluído");
   if (n == 0) {
     Serial.println("Nenhuma rede encontrada");
-  } else {
-    Serial.print(n);
-    Serial.println(" redes encontradas");
-    for (int i = 0; i < n; ++i) {
-      Serial.print(i + 1);
-      Serial.print(": ");
-      Serial.print(WiFi.SSID(i));
-      Serial.print(" (");
-      Serial.print(WiFi.RSSI(i));
-      Serial.print(")");
-      Serial.println((WiFi.encryptionType(i) == WIFI_AUTH_OPEN)?" ":"*");
-      delay(10);
-    }
+    return;
   }
-  Serial.println("");
-}
-
-void getWiFiCredentials(String &ssid, String &password) {
-  Serial.println("Por favor, digite o nome da rede Wi-Fi que deseja conectar:");
-  while (!Serial.available()) {
-    delay(100);
-  }
-  ssid = Serial.readStringUntil('\n');
-  ssid.trim();
-  
-  Serial.print("Você digitou: ");
-  Serial.println(ssid);
-  
-  Serial.println("Agora, digite a senha da rede Wi-Fi:");
-  while (!Serial.available()) {
-    delay(100);
-  }
-  password = Serial.readStringUntil('\n');
-  password.trim();
-  
-  // Imprimir asteriscos para cada caractere da senha
-  Serial.print("Senha inserida: ");
-  for (int i = 0; i < password.length(); i++) {
-    Serial.print("*");
+  Serial.print(n);
+  Serial.println(" redes encontradas");
+  for (int i = 0; i < n; ++i) {
+    Serial.print(i + 1);
+    Serial.print(": ");
+    Serial.print(WiFi.SSID(i));
+    Serial.print(" (");
+    Serial.print(WiFi.RSSI(i));
+    Serial.print(")");
+    Serial.println((WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? " " : "*");
+    delay(10);
   }
   Serial.println();
 }
 
-void connectWiFi() {
+void loadConfig() {
+  prefs.begin("parking", true);
+  wifiSsid = prefs.getString("ssid", "");
+  wifiPassword = prefs.getString("password", "");
+  spotId = prefs.getString("spot_id", "");
+  prefs.end();
+}
+
+void saveConfig() {
+  prefs.begin("parking", false);
+  prefs.putString("ssid", wifiSsid);
+  prefs.putString("password", wifiPassword);
+  prefs.putString("spot_id", spotId);
+  prefs.end();
+}
+
+bool isConfigured() {
+  return wifiSsid.length() > 0 && spotId.length() > 0;
+}
+
+// Pede Wi-Fi e ID da vaga pela serial e salva na memória
+void configureViaSerial() {
   scanNetworks();
-  String ssid, password;
-  getWiFiCredentials(ssid, password);
-  
-  Serial.println("Conectando ao WiFi...");
-  WiFi.begin(ssid.c_str(), password.c_str());
+
+  Serial.println("Digite o nome da rede Wi-Fi:");
+  wifiSsid = readSerialLine();
+  Serial.print("Rede: ");
+  Serial.println(wifiSsid);
+
+  Serial.println("Digite a senha da rede Wi-Fi:");
+  wifiPassword = readSerialLine();
+  Serial.print("Senha: ");
+  for (unsigned int i = 0; i < wifiPassword.length(); i++) {
+    Serial.print("*");
+  }
+  Serial.println();
+
+  Serial.println("Digite o ID da vaga de estacionamento:");
+  spotId = readSerialLine();
+  Serial.print("ID da vaga: ");
+  Serial.println(spotId);
+
+  saveConfig();
+  Serial.println("Configuração salva.");
+}
+
+// Se já está configurado, dá alguns segundos para o usuário pedir reconfiguração
+bool userWantsToReconfigure() {
+  Serial.print("Pressione 'c' + Enter em ");
+  Serial.print(CONFIG_WINDOW_MS / 1000);
+  Serial.println("s para reconfigurar Wi-Fi/ID da vaga...");
+  unsigned long start = millis();
+  while (millis() - start < CONFIG_WINDOW_MS) {
+    if (Serial.available()) {
+      String answer = Serial.readStringUntil('\n');
+      answer.trim();
+      return answer == "c" || answer == "C";
+    }
+    delay(50);
+  }
+  return false;
+}
+
+bool connectWiFi() {
+  Serial.print("Conectando ao Wi-Fi ");
+  Serial.println(wifiSsid);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
     attempts++;
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nConectado ao WiFi");
-    Serial.print("Endereço IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\nFalha ao conectar ao WiFi. Por favor, verifique as credenciais e tente novamente.");
-    ESP.restart(); // Reinicia o ESP32
+  Serial.println();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Falha ao conectar ao Wi-Fi.");
+    return false;
   }
-}
-
-void setupSpotId() {
-  loadSpotId();
-  if (spotId.length() == 0 || askToChangeSpotId()) {
-    getSpotId();
-  }
-}
-
-void loadSpotId() {
-  spotId = "";
-  for (int i = 0; i < SPOT_ID_MAX_LENGTH; ++i) {
-    char c = EEPROM.read(SPOT_ID_ADDRESS + i);
-    if (c == 0 || c == 255) break;
-    if (isPrintable(c)) {
-      spotId += c;
-    } else {
-      break;
-    }
-  }
-  
-  if (spotId.length() > 0) {
-    Serial.print("ID da vaga atual: ");
-    Serial.println(spotId);
-  } else {
-    Serial.println("Nenhum ID de vaga configurado.");
-  }
-}
-
-void getSpotId() {
-  Serial.println("Por favor, digite o ID da vaga de estacionamento:");
-  while (!Serial.available()) {
-    delay(100);
-  }
-  spotId = Serial.readStringUntil('\n');
-  spotId.trim();
-  
-  for (int i = 0; i < SPOT_ID_MAX_LENGTH; ++i) {
-    EEPROM.write(SPOT_ID_ADDRESS + i, 0);
-  }
-  
-  for (int i = 0; i < spotId.length(); ++i) {
-    EEPROM.write(SPOT_ID_ADDRESS + i, spotId[i]);
-  }
-  EEPROM.commit();
-  
-  Serial.print("ID da vaga configurado: ");
-  Serial.println(spotId);
-}
-
-bool askToChangeSpotId() {
-  Serial.println("Deseja alterar o ID da vaga? (S/N)");
-  while (!Serial.available()) {
-    delay(100);
-  }
-  String response = Serial.readStringUntil('\n');
-  response.trim();
-  return (response == "S" || response == "s");
+  Serial.print("Conectado. IP: ");
+  Serial.println(WiFi.localIP());
+  return true;
 }
 
 void connectAWS() {
-  wifiClient.setCACert(ROOT_CA);
-  wifiClient.setCertificate(CERTIFICATE);
-  wifiClient.setPrivateKey(PRIVATE_KEY);
+  // ID único por sensor: dois clientes com o mesmo ID derrubam um ao outro
+  String clientId = "tech4parking-" + spotId;
 
-  mqttClient.setServer(AWS_IOT_ENDPOINT, 8883);
-
-  Serial.println("Tentando conectar ao AWS IoT...");
+  Serial.println("Conectando ao AWS IoT...");
   int retries = 0;
-  while (!mqttClient.connect("ESP32Client") && retries < 5) {
-    Serial.println("Falha na conexão. Tentando novamente em 5 segundos...");
+  while (!mqttClient.connect(clientId.c_str()) && retries < 5) {
+    Serial.print("Falha na conexão, rc=");
+    Serial.print(mqttClient.state());
+    Serial.println(". Tentando novamente em 5 segundos...");
     delay(5000);
     retries++;
   }
@@ -199,59 +158,87 @@ void connectAWS() {
   if (mqttClient.connected()) {
     Serial.println("Conectado ao AWS IoT");
   } else {
-    Serial.print("Falha na conexão, rc=");
-    Serial.print(mqttClient.state());
-    Serial.println(" Não foi possível conectar após 5 tentativas");
+    Serial.println("Não foi possível conectar ao AWS IoT após 5 tentativas");
   }
 }
 
-void setup() {
-  Serial.begin(9600);
-  while (!Serial) {
-    ; // Espera a porta serial conectar. Necessário apenas para placas com USB nativa
-  }
-  
-  if (!EEPROM.begin(EEPROM_SIZE)) {
-    Serial.println("Falha ao iniciar EEPROM");
-    return;
-  }
-  
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
-  
-  connectWiFi();
-  setupSpotId();
-  connectAWS();
-}
-
-void loop() {
-  if (!mqttClient.connected()) {
-    connectAWS();
-  }
-  mqttClient.loop();
-
+// Retorna a distância em cm, ou -1 se não houve eco (leitura inválida)
+float readDistanceCm() {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
-  
-  long duration = pulseIn(echoPin, HIGH);
-  float distance = duration * 0.034 / 2;
-  
-  String currentStatus = (distance < 20) ? "ocupada" : "disponível";
-  
+
+  unsigned long duration = pulseIn(echoPin, HIGH, ECHO_TIMEOUT_US);
+  if (duration == 0) {
+    return -1;
+  }
+  return duration * 0.034 / 2;
+}
+
+void setup() {
+  Serial.begin(9600);
+  delay(500);
+
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  loadConfig();
+  if (!isConfigured() || userWantsToReconfigure()) {
+    configureViaSerial();
+  } else {
+    Serial.print("ID da vaga: ");
+    Serial.println(spotId);
+  }
+
+  if (!connectWiFi()) {
+    Serial.println("Verifique as credenciais (reinicie e pressione 'c' para reconfigurar).");
+    delay(10000);
+    ESP.restart();
+  }
+
+  wifiClient.setCACert(AWS_CERT_CA);
+  wifiClient.setCertificate(AWS_CERT_CRT);
+  wifiClient.setPrivateKey(AWS_CERT_PRIVATE);
+  mqttClient.setServer(AWS_IOT_ENDPOINT, 8883);
+  connectAWS();
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Conexão Wi-Fi perdida. Reconectando...");
+    if (!connectWiFi()) {
+      delay(5000);
+      return;
+    }
+  }
+
+  if (!mqttClient.connected()) {
+    connectAWS();
+  }
+  mqttClient.loop();
+
+  float distance = readDistanceCm();
+  if (distance < 0) {
+    Serial.println("Leitura inválida do sensor (sem eco), ignorando.");
+    delay(5000);
+    return;
+  }
+
+  String currentStatus = (distance < OCCUPIED_DISTANCE_CM) ? "ocupada" : "disponível";
+
   Serial.print("Distância: ");
   Serial.print(distance);
   Serial.print(" cm, Status: ");
   Serial.println(currentStatus);
-  
-  if (currentStatus != lastStatus) {
+
+  if (currentStatus != lastStatus && mqttClient.connected()) {
     char payload[256];
-    snprintf(payload, sizeof(payload), 
-             "{\"spot_id\":\"%s\",\"status\":\"%s\",\"distance\":%.2f}", 
+    snprintf(payload, sizeof(payload),
+             "{\"spot_id\":\"%s\",\"status\":\"%s\",\"distance\":%.2f}",
              spotId.c_str(), currentStatus.c_str(), distance);
-    
+
     if (mqttClient.publish(AWS_IOT_TOPIC, payload)) {
       Serial.println("Mensagem publicada no AWS IoT");
       lastStatus = currentStatus;
@@ -259,11 +246,6 @@ void loop() {
       Serial.println("Falha ao publicar mensagem");
     }
   }
-  
+
   delay(5000);
-  
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Conexão Wi-Fi perdida. Reconectando...");
-    connectWiFi();
-  }
 }
