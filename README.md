@@ -1,37 +1,85 @@
-# tech4parking-iot
+<h1 align="center">
+  Tech4Parking · IoT
+</h1>
 
-Firmware do sensor de vaga do Tech4Parking: ESP32 + sensor ultrassônico HC-SR04 publicando a ocupação da vaga no AWS IoT Core via MQTT (TLS, porta 8883).
+<p align="center">
+  <img src="docs/arch.gif" alt="Arquitetura do Tech4Parking na AWS" />
+</p>
 
-## Como funciona
+<p align="center">
+  <a href="https://skillicons.dev">
+    <img src="https://skillicons.dev/icons?i=arduino,cpp,aws" alt="Stacks" />
+  </a>
+</p>
 
-1. No primeiro boot pede pela serial o Wi-Fi e o ID da vaga e salva na memória flash (NVS).
-2. Nos boots seguintes usa a configuração salva. Para reconfigurar, digite `c` + Enter nos primeiros 5 segundos.
-3. A cada 5 s mede a distância: menos de 20 cm = `ocupada`, senão `disponível`. Leituras sem eco são ignoradas.
-4. Quando o status muda, publica no tópico `parking_sensor`:
+## Qual a finalidade do projeto?
+
+Firmware do **sensor de vaga** do **Tech4Parking**. Um **ESP32** com um sensor ultrassônico **HC-SR04** fica instalado na vaga, mede a distância até o carro e publica no **AWS IoT Core**, via **MQTT sobre TLS**, sempre que a vaga muda de **disponível** para **ocupada** (ou o contrário).
+
+A mensagem chega na **regra IoT** do tópico `parking_sensor`, que invoca a **Lambda** de vagas. Ela atualiza a tabela no **DynamoDB**, e o web app mostra o estado em tempo real.
+
+## O que foi construído
+
+### Firmware
+
+| Recurso | Descrição |
+|---|---|
+| Configuração na primeira vez | Pede o Wi-Fi e o ID da vaga pela serial e salva na flash (NVS) |
+| Reconfiguração | Digitar `c` + Enter nos primeiros 5 segundos após ligar |
+| Medição | A cada 5 s; menos de 20 cm = `ocupada`, senão `disponível` |
+| Leituras inválidas | Sem eco (timeout de 30 ms) são ignoradas |
+| Publicação | Só quando o status muda, no tópico `parking_sensor` |
+| Conexão | MQTT/TLS na porta 8883, com client ID único por vaga (`tech4parking-<spot_id>`) |
+
+### Mensagem publicada
 
 ```json
 {"spot_id": "A-01", "status": "ocupada", "distance": 12.34}
 ```
 
-## Ligação
+### Ligação
 
 | HC-SR04 | ESP32 |
-|---------|-------|
+|---|---|
 | VCC | 5V |
 | GND | GND |
 | TRIG | GPIO 17 (TX2) |
-| ECHO | GPIO 16 (RX2) ⚠️ use divisor de tensão (o ECHO sai em 5V) |
+| ECHO | GPIO 16 (RX2) ⚠️ usar divisor de tensão (o ECHO sai em 5V) |
 
-## Configuração
+## Tecnologias utilizadas
 
-1. Crie um *Thing* no AWS IoT Core e baixe o certificado e a chave privada.
+- **ESP32 (Arduino / C++):** microcontrolador com Wi-Fi;
+- **HC-SR04:** sensor ultrassônico de distância;
+- **PubSubClient:** cliente MQTT;
+- **WiFiClientSecure:** conexão TLS com certificado do dispositivo;
+- **Preferences (NVS):** armazenamento do Wi-Fi e do ID da vaga;
+- **AWS IoT Core:** broker MQTT e regra que encaminha para a Lambda.
+
+## Estrutura do repositório
+
+```text
+tech4parking-iot/
+├── iot-core/parking-spots/
+│   ├── parking-spots.ino        # Firmware do sensor
+│   └── secrets.example.h        # Modelo de endpoint, certificado e chave
+├── docs/arch.gif                # Diagrama da arquitetura
+└── README.md
+```
+
+## Fluxo de funcionamento
+
+1. Ao ligar, o ESP32 carrega o Wi-Fi e o ID da vaga da memória (ou pede pela serial na primeira vez).
+2. Conecta ao Wi-Fi e ao AWS IoT Core com o certificado do dispositivo.
+3. A cada 5 segundos, o HC-SR04 mede a distância.
+4. Quando a vaga muda de estado, o firmware publica a mensagem no tópico `parking_sensor`.
+5. A regra IoT invoca a Lambda, que atualiza a tabela `ParkingSpots`.
+6. O web app passa a mostrar a vaga como disponível ou ocupada.
+
+## Configuração e gravação
+
+1. Crie um *Thing* no AWS IoT Core e baixe o certificado e a chave privada (a infraestrutura em [tech4parking-infra](https://github.com/willtechdev/tech4parking-infra) já cria o Thing, o certificado e a policy).
 2. Copie `iot-core/parking-spots/secrets.example.h` para `secrets.h` (ignorado pelo git) e preencha o endpoint, o certificado e a chave.
-
-## Compilar e gravar
-
-Arduino IDE: placa **ESP32 Dev Module** (pacote `esp32` da Espressif) + biblioteca **PubSubClient**. Monitor serial em 9600.
-
-Ou com `arduino-cli`:
+3. Compile e grave. No Arduino IDE: placa **ESP32 Dev Module** + biblioteca **PubSubClient**, monitor serial em 9600. Ou com `arduino-cli`:
 
 ```bash
 arduino-cli core install esp32:esp32
@@ -40,8 +88,28 @@ arduino-cli compile --fqbn esp32:esp32:esp32 iot-core/parking-spots
 arduino-cli upload  --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 iot-core/parking-spots
 ```
 
-## Repositórios relacionados
+## Como validar a entrega
 
-- [tech4parking-infra](https://github.com/tech4parking-org/tech4parking-infra): regra IoT, Lambda e demais recursos AWS
-- [tech4parking-back](https://github.com/tech4parking-org/tech4parking-back): Lambda que processa as mensagens
-- [tech4parking-front](https://github.com/tech4parking-org/tech4parking-front): web app
+Em uma validação end-to-end, aproximar e afastar um objeto do sensor deve mudar o estado da vaga no web app.
+
+Pontos principais de validação:
+
+- firmware compilando para **ESP32 Dev Module** sem erros;
+- monitor serial mostrando a conexão ao Wi-Fi e ao AWS IoT Core;
+- distância abaixo de 20 cm publicando `ocupada` e acima publicando `disponível`;
+- mensagem visível no **MQTT test client** do IoT Core, no tópico `parking_sensor`;
+- vaga atualizada na tabela `ParkingSpots` e no web app;
+- boot seguinte usando o Wi-Fi e o ID da vaga salvos, sem pedir de novo.
+
+## Projeto Tech4Parking
+
+| Repositório | Camada |
+|---|---|
+| [tech4parking-front](https://github.com/willtechdev/tech4parking-front) | Web app (Next.js) |
+| [tech4parking-back](https://github.com/willtechdev/tech4parking-back) | Lambda de vagas (sensor + API) |
+| [tech4parking-infra](https://github.com/willtechdev/tech4parking-infra) | Infraestrutura AWS (Terraform) |
+| **tech4parking-iot** | Firmware do sensor (ESP32) |
+
+## Autor
+
+**William Alves Coelho** · [@willtechdev](https://github.com/willtechdev)
