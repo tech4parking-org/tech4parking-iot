@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="T4Parking" width="260" />
+</p>
+
 <h1 align="center">
   Tech4Parking · IoT
 </h1>
@@ -62,7 +66,9 @@ tech4parking-iot/
 ├── iot-core/parking-spots/
 │   ├── parking-spots.ino        # Firmware do sensor
 │   └── secrets.example.h        # Modelo de endpoint, certificado e chave
-├── docs/arch.gif                # Diagrama da arquitetura
+├── docs/
+│   ├── arch.gif                 # Diagrama da arquitetura
+│   └── logo.png                 # Logo T4Parking
 └── README.md
 ```
 
