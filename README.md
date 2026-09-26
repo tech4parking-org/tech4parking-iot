@@ -83,7 +83,7 @@ tech4parking-iot/
 
 ## Configuração e gravação
 
-1. Crie um *Thing* no AWS IoT Core e baixe o certificado e a chave privada (a infraestrutura em [tech4parking-infra](https://github.com/willtechdev/tech4parking-infra) já cria o Thing, o certificado e a policy).
+1. Crie um *Thing* no AWS IoT Core e baixe o certificado e a chave privada (a infraestrutura em [tech4parking-infra](https://github.com/tech4parking-org/tech4parking-infra) já cria o Thing, o certificado e a policy).
 2. Copie `iot-core/parking-spots/secrets.example.h` para `secrets.h` (ignorado pelo git) e preencha o endpoint, o certificado e a chave.
 3. Compile e grave. No Arduino IDE: placa **ESP32 Dev Module** + biblioteca **PubSubClient**, monitor serial em 9600. Ou com `arduino-cli`:
 
@@ -111,9 +111,9 @@ Pontos principais de validação:
 
 | Repositório | Camada |
 |---|---|
-| [tech4parking-front](https://github.com/willtechdev/tech4parking-front) | Web app (Next.js) |
-| [tech4parking-back](https://github.com/willtechdev/tech4parking-back) | Lambda de vagas (sensor + API) |
-| [tech4parking-infra](https://github.com/willtechdev/tech4parking-infra) | Infraestrutura AWS (Terraform) |
+| [tech4parking-front](https://github.com/tech4parking-org/tech4parking-front) | Web app (Next.js) |
+| [tech4parking-back](https://github.com/tech4parking-org/tech4parking-back) | Lambda de vagas (sensor + API) |
+| [tech4parking-infra](https://github.com/tech4parking-org/tech4parking-infra) | Infraestrutura AWS (Terraform) |
 | **tech4parking-iot** | Firmware do sensor (ESP32) |
 
 ## Autor
